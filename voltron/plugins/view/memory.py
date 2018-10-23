@@ -97,6 +97,7 @@ class MemoryView(TerminalView):
                 byte_array = []
                 for i, x in enumerate(six.iterbytes(chunk)):
                     n = "%02X" % x
+                    token = Text if x else Comment
                     if self.args.track and self.last_memory:
                         if 0 <= c+i-mem_offset and c+i-mem_offset < len(self.last_memory) and x != six.indexbytes(self.last_memory, c + i - mem_offset):
                                 byte_array.append((Error, n))
@@ -121,7 +122,7 @@ class MemoryView(TerminalView):
                 # ASCII representation
                 yield (Punctuation, '| ')
                 for i, x in enumerate(six.iterbytes(chunk)):
-                    token = String.Char
+                    token = String.Char if x else Comment
                     if self.args.track and self.last_memory:
                         if 0 <= c+i-mem_offset and c+i-mem_offset < len(self.last_memory) and x != six.indexbytes(self.last_memory, c + i - mem_offset):
                             token = Error
@@ -231,11 +232,11 @@ class StackView(MemoryView):
         sp = subparsers.add_parser('stack', help='display a chunk of stack memory', aliases=('s', 'st'))
         VoltronView.add_generic_arguments(sp)
         sp.set_defaults(func=StackView)
+        sp.add_argument('--reverse', '-v', action='store_false', help='(un)reverse the output', default=True)
         sp.add_argument('--track', '-t', action='store_true', help='track and highlight changes', default=True)
         sp.add_argument('--no-track', '-T', action='store_false', help='don\'t track and highlight changes')
 
     def build_requests(self):
-        self.args.reverse = True
         self.args.deref = True
         self.args.words = False
         self.args.register = 'sp'
