@@ -9,13 +9,17 @@ from voltron.plugin import ViewPlugin, api_request
 
 log = logging.getLogger("view")
 
-
 class MemoryView(TerminalView):
     printable_filter = ''.join([(len(repr(chr(x))) == 3) and chr(x) or '.' for x in range(256)])
 
     async = True
     last_memory = None
     last_address = 0
+    prev_last_memory = None
+    prev_last_address = 0
+    next_last_address = 0
+    next_last_memory= None
+    update_memory = True
 
     @classmethod
     def configure_subparser(cls, subparsers):
@@ -80,8 +84,9 @@ class MemoryView(TerminalView):
 
         if t_res and t_res.is_success and len(t_res.targets) > 0:
             target = t_res.targets[0]
-
+        
         if m_res and m_res.is_success:
+            mem_offset = self.last_address - m_res.address if self.last_address else 0
             bytes_per_chunk = self.args.words*target['addr_size'] if self.args.words else self.args.bytes
             for c in range(0, m_res.bytes, bytes_per_chunk):
                 chunk = m_res.memory[c:c + bytes_per_chunk]
@@ -92,9 +97,9 @@ class MemoryView(TerminalView):
                 byte_array = []
                 for i, x in enumerate(six.iterbytes(chunk)):
                     n = "%02X" % x
-                    if self.args.track and self.last_memory and self.last_address == m_res.address:
-                        if x != six.indexbytes(self.last_memory, c + i):
-                            byte_array.append((Error, n))
+                    if self.args.track and self.last_memory:
+                        if 0 <= c+i-mem_offset and c+i-mem_offset < len(self.last_memory) and x != six.indexbytes(self.last_memory, c + i - mem_offset):
+                                byte_array.append((Error, n))
                         else:
                             byte_array.append((Text, n))
                     else:
@@ -117,8 +122,8 @@ class MemoryView(TerminalView):
                 yield (Punctuation, '| ')
                 for i, x in enumerate(six.iterbytes(chunk)):
                     token = String.Char
-                    if self.args.track and self.last_memory and self.last_address == m_res.address:
-                        if x != six.indexbytes(self.last_memory, c + i):
+                    if self.args.track and self.last_memory:
+                        if 0 <= c+i-mem_offset and c+i-mem_offset < len(self.last_memory) and x != six.indexbytes(self.last_memory, c + i - mem_offset):
                             token = Error
                     yield (token, ((x <= 127 and self.printable_filter[x]) or '.'))
                 yield (Punctuation, ' | ')
@@ -161,19 +166,43 @@ class MemoryView(TerminalView):
             f = pygments.formatters.get_formatter_by_name(self.config.format.pygments_formatter,
                                                           style=self.config.format.pygments_style)
 
+            if not self.update_memory:
+                # This was a scroll, use memory view before most recent saved version
+                self.last_address = self.prev_last_address
+                self.last_memory = self.prev_last_memory
+            else:
+                 # not a scroll, we should actually update memory to most recent saved version
+                self.last_address = self.next_last_address
+                self.last_memory = self.next_last_memory
+
+
             if m_res and m_res.is_success:
                 lines = pygments.format(self.generate_tokens(results), f).split('\n')
                 self.body = '\n'.join(reversed(lines)).strip() if self.args.reverse else '\n'.join(lines)
                 self.info = '[0x{0:0=4x}:'.format(len(m_res.memory)) + self.config.format.addr_format.format(m_res.address) + ']'
             else:
-                log.error("Error reading memory: {}".format(m_res.message))
+                logging.error("Error reading memory: {}".format(m_res.message))
                 self.body = pygments.format([(Error, m_res.message)], f)
                 self.info = ''
 
             # Store the memory
-            if self.args.track:
+            if self.update_memory:
+                # save last_address and last_memory in case next render is a scroll
+                self.prev_last_address = self.last_address
+                self.prev_last_memory = self.last_memory
+
                 self.last_address = m_res.address
                 self.last_memory = m_res.memory
+                
+                # Track these for the normal case
+                self.next_last_address = m_res.address
+                self.next_last_memory = m_res.memory
+            else:
+                # Rendered a scroll, save most recent memory in case next event is not a scroll
+                self.update_memory = True
+                self.next_last_address = m_res.address
+                self.next_last_memory = m_res.memory
+
         else:
             self.body = self.colour("Failed to get targets", 'red')
 
